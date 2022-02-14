@@ -4,15 +4,15 @@ import { UserController } from './user.controller';
 import { UserService } from './user.service';
 import { User, UserSchema } from './schemas/user.schema';
 import {
-  PageAfter,
-  PageAfterSchema,
-} from '../pageAfter/schemas/pageAfter.schema';
+  CrawlRequest,
+  CrawlRequestSchema,
+} from '../crawlRequest/schemas/crawlRequest.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
-      { name: PageAfter.name, schema: PageAfterSchema },
+      { name: CrawlRequest.name, schema: CrawlRequestSchema },
     ]),
   ],
   controllers: [UserController],

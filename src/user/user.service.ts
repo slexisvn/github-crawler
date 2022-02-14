@@ -1,37 +1,52 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as moment from 'moment';
 import { convertArrayToCSV } from 'convert-array-to-csv';
 import { Octokit } from '@octokit/core';
-import { SchedulerRegistry } from '@nestjs/schedule';
+import { Cron, CronExpression, SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { writeFileSync, existsSync, mkdirSync } from 'fs';
-import { CreateUserDto } from './dto/create-user.dto';
+import { CreateRequestDto } from './dto/create-user.dto';
 import { User, UserDocument } from './schemas/user.schema';
 import {
-  PageAfter,
-  PageAfterDocument,
-} from '../pageAfter/schemas/pageAfter.schema';
+  CrawlRequest,
+  CrawlRequestDocument,
+} from '../crawlRequest/schemas/crawlRequest.schema';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
-    @InjectModel(PageAfter.name)
-    private readonly pageAfterModel: Model<PageAfterDocument>,
+    @InjectModel(CrawlRequest.name)
+    private readonly crawlRequestModel: Model<CrawlRequestDocument>,
     private schedulerRegistry: SchedulerRegistry,
   ) {}
 
   private readonly logger = new Logger(User.name);
 
-  async getUsers(repoUrl: string, pageAfterArg: string | null = null) {
+  @Cron(CronExpression.EVERY_30_SECONDS)
+  async handleCron() {
     try {
+      const regex = /^https:\/\/github\.com\/(\w+)\/([\w-]+)(\/|)$/;
+      const crawlRequests = await this.crawlRequestModel.find({
+        isDone: false,
+        nextCursor: { $nin: [null] },
+        $orderBy: { createdAt: -1 },
+      });
+
+      if (crawlRequests.length < 1) {
+        this.logger.log('No request');
+        return;
+      }
+
       let hasNextPage = true;
-      let rateLimitRemaing = 7;
-      let pageAfter = pageAfterArg;
+      let totalUsers = 2;
+      const firstRequest = crawlRequests[0];
+      let endCursor = firstRequest.endCursors[0];
       const users = [];
-      const [repoOwner, repoName] = repoUrl.split('/');
+      const repoOwner = firstRequest.repoUrl.replace(regex, '$1');
+      const repoName = firstRequest.repoUrl.replace(regex, '$2');
       const startLasthMonth = moment()
         .add(-1, 'months')
         .startOf('months')
@@ -45,12 +60,13 @@ export class UserService {
         auth: process.env.PERSONAL_TOKEN,
       });
 
-      while (rateLimitRemaing > 1 && hasNextPage) {
-        const { repository, rateLimit } = await octokit.graphql(
+      while (totalUsers > 1 && hasNextPage) {
+        const { repository } = await octokit.graphql(
           `
-            query ($name: String!, $owner: String!, $commitSince: GitTimestamp!, $commitUntil: GitTimestamp! $pageAfter: String) {
+            query ($name: String!, $owner: String!, $commitSince: GitTimestamp!, $commitUntil: GitTimestamp! $endCursor: String) {
               repository(name: $name, owner: $owner) {
-                stargazers(first: 2, after: $pageAfter) {
+                stargazers(first: 1, after: $endCursor) {
+                  totalCount
                   pageInfo {
                     endCursor
                     hasNextPage
@@ -133,113 +149,114 @@ export class UserService {
             owner: repoOwner,
             commitSince: startLasthMonth,
             commitUntil: endLasthMonth,
-            pageAfter,
+            endCursor,
           },
         );
 
         hasNextPage = repository.stargazers.pageInfo.hasNextPage;
-        pageAfter = repository.stargazers.pageInfo.endCursor;
-        rateLimitRemaing -= rateLimit.cost;
+        endCursor = repository.stargazers.pageInfo.endCursor;
+        totalUsers--;
 
-        const tempUsers = repository.stargazers.edges.map(edge => {
-          const fullName = edge.node.name ? edge.node.name.split(' ') : [];
-          const openRepos = [];
-          const langs = [];
-          const miscKeywords = [];
-          let totalCommits = 0;
+        const edge = repository.stargazers.edges[0];
+        const fullName = edge.node.name ? edge.node.name.split(' ') : [];
+        const openRepos = [];
+        const langs = [];
+        const miscKeywords = [];
+        let totalCommits = 0;
 
-          edge.node.repositories.edges.forEach(edRepo => {
-            const tempMiscKeywords = edRepo.node.repositoryTopics.edges.map(
-              edTopic => edTopic.node.topic.name,
-            );
-
-            miscKeywords.push(...tempMiscKeywords);
-
-            if (edRepo.node.stargazerCount > 5) {
-              const tempLangs = edRepo.node.languages.edges.map(
-                edLang => edLang.node.name,
-              );
-              langs.push(...tempLangs);
-            }
-
-            if (edRepo.node.defaultBranchRef) {
-              totalCommits +=
-                edRepo.node.defaultBranchRef.target.history.nodes.filter(
-                  node => node.author?.user?.login === edge.node.login,
-                ).length;
-            }
-
-            if (
-              edRepo.node.isFork &&
-              edRepo.node.parent &&
-              edRepo.node.parent.forkCount > 5 &&
-              edRepo.node.parent.stargazerCount > 5
-            ) {
-              openRepos.push(edRepo.node);
-            }
-          });
-
-          return {
-            login: edge.node.login,
-            repoUrl,
-            firstName: fullName[0] || null,
-            lastName: fullName[fullName.length - 1] || null,
-            location: edge.node.location,
-            email: edge.node.email,
-            profileLink: edge.node.url,
-            repos: edge.node.repositories.totalCount,
-            followers: edge.node.followers.totalCount,
-            openToNewOpportunities: !!edge.node.isHireable,
-            activityLevel: totalCommits,
-            activeInOpenSource: openRepos.length > 0,
-            languages: [...new Set(langs)],
-            miscKeywords: [...new Set(miscKeywords)],
-          };
+        const user = await this.userModel.findOne({
+          login: edge.node.login,
         });
 
-        users.push(...tempUsers);
+        if (user) {
+          this.logger.log(`${user.login} already exists in the ${user.repoUrl}`);
+          continue;
+        }
+
+        edge.node.repositories.edges.forEach(edRepo => {
+          const tempMiscKeywords = edRepo.node.repositoryTopics.edges.map(
+            edTopic => edTopic.node.topic.name,
+          );
+
+          miscKeywords.push(...tempMiscKeywords);
+
+          if (edRepo.node.stargazerCount > 5) {
+            const tempLangs = edRepo.node.languages.edges.map(
+              edLang => edLang.node.name,
+            );
+            langs.push(...tempLangs);
+          }
+
+          if (edRepo.node.defaultBranchRef) {
+            totalCommits +=
+              edRepo.node.defaultBranchRef.target.history.nodes.filter(
+                node => node.author?.user?.login === edge.node.login,
+              ).length;
+          }
+
+          if (
+            edRepo.node.isFork &&
+            edRepo.node.parent &&
+            edRepo.node.parent.forkCount > 5 &&
+            edRepo.node.parent.stargazerCount > 5
+          ) {
+            openRepos.push(edRepo.node);
+          }
+        });
+
+        this.logger.log(
+          `get the user ${edge.node.login} out of ${repository.stargazers.totalCount} users - ${firstRequest.repoUrl}`,
+        );
+
+        users.push({
+          login: edge.node.login,
+          repoUrl: firstRequest.repoUrl,
+          firstName: fullName[0] || null,
+          lastName: fullName[fullName.length - 1] || null,
+          location: edge.node.location,
+          email: edge.node.email,
+          profileLink: edge.node.url,
+          repos: edge.node.repositories.totalCount,
+          followers: edge.node.followers.totalCount,
+          openToNewOpportunities: !!edge.node.isHireable,
+          activityLevel: totalCommits,
+          activeInOpenSource: openRepos.length > 0,
+          languages: [...new Set(langs)],
+          miscKeywords: [...new Set(miscKeywords)],
+        });
       }
       await this.userModel.create(users);
-
-      if (pageAfter) {
-        await this.pageAfterModel.create({
-          value: pageAfter,
-          hasNextPage,
-          createdAt: moment().valueOf(),
-          repoUrl,
-        });
-      }
+      await this.crawlRequestModel.updateOne(
+        { _id: firstRequest._id },
+        {
+          $set: {
+            endCursors: [endCursor, ...firstRequest.endCursors],
+            isDone: !hasNextPage,
+          },
+        },
+      );
     } catch (e) {
       console.log(e);
     }
   }
 
-  async createUsers({ repoUrl }: CreateUserDto) {
-    if (!repoUrl) {
-      return;
+  async createRequest({ repoUrl }: CreateRequestDto): Promise<HttpStatus> {
+    const foundRequest = await this.crawlRequestModel
+      .findOne({ repoUrl })
+      .lean();
+
+    if (foundRequest) {
+      return HttpStatus.BAD_REQUEST;
     }
 
-    await this.getUsers(repoUrl);
-
-    const job = new CronJob(`15 * * * * *`, async () => {
-      const data = await this.pageAfterModel
-        .find({ repoUrl })
-        .sort({ createdAt: -1 })
-        .lean();
-      const firstData = data[0];
-
-      if (firstData.hasNextPage) {
-        await this.getUsers(repoUrl, firstData.value);
-        this.logger.debug(`Cron job is called after 30 minutes`);
-      } else {
-        this.schedulerRegistry.getCronJob('crawl').stop();
-        this.logger.debug(`Stop a cron job`);
-      }
+    await this.crawlRequestModel.create({
+      repoUrl,
+      isDone: false,
+      endCursors: [null],
+      createdAt: moment().valueOf(),
     });
 
-    this.schedulerRegistry.addCronJob('crawl', job);
-    job.start();
-    this.logger.debug(`Start a cron job`);
+    return HttpStatus.OK;
   }
 
   async createCSVFile(): Promise<void> {
@@ -277,7 +294,7 @@ export class UserService {
     });
 
     if (!existsSync('files')) {
-      mkdirSync('files')
+      mkdirSync('files');
     }
 
     writeFileSync('files/users.csv', convertArrayToCSV(formatUsers), 'utf8');

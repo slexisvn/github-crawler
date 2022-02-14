@@ -2,18 +2,18 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import { v1 } from 'uuid';
 
-export type PageAfterDocument = PageAfter & Document;
+export type CrawlRequestDocument = CrawlRequest & Document;
 
-@Schema({ collection: 'pageAfter' })
-export class PageAfter {
+@Schema({ collection: 'crawlRequest' })
+export class CrawlRequest {
   @Prop({ default: v1 })
   _id: string;
 
   @Prop()
-  value: string;
+  endCursors: string[];
 
   @Prop()
-  hasNextPage: boolean;
+  isDone: boolean;
 
   @Prop()
   repoUrl: string;
@@ -22,4 +22,4 @@ export class PageAfter {
   createdAt: number;
 }
 
-export const PageAfterSchema = SchemaFactory.createForClass(PageAfter);
+export const CrawlRequestSchema = SchemaFactory.createForClass(CrawlRequest);

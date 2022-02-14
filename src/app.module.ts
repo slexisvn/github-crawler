@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ScheduleModule } from '@nestjs/schedule';
 import { UserModule } from './user/user.module';
-import { PageAfterModule } from './pageAfter/pageAfter.module';
+import { CrawlRequestModule } from './crawlRequest/crawlRequest.module';
 import { ConfigModule } from '@nestjs/config';
 
 @Module({
@@ -10,7 +10,7 @@ import { ConfigModule } from '@nestjs/config';
     ConfigModule.forRoot(),
     MongooseModule.forRoot(process.env.MONGO_URI),
     UserModule,
-    PageAfterModule,
+    CrawlRequestModule,
     ScheduleModule.forRoot(),
   ],
 })
