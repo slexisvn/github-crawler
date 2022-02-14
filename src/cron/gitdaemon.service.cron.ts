@@ -13,7 +13,7 @@ export class GitDaemonCronService {
   async crawlProfiles() {
     // 1. Lấy crawl request (mới nhất) nào chưa chạy xong (isDone = false)
     // Khi nào là xong: xong là khi crawlRequest.isDone = true
-    // .find({ isDone: false, nextCursor: { $nin: [null]} })
+    // .find({ isDone: false, nextCursor: { $nin: [null] }, { $orderBy: { createdAt: -1 }})
 
     // 2. Chạy 100 người, lưu từng người vào database nếu người đó chưa ton tai
     // (Goi API len github.)
