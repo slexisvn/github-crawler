@@ -20,7 +20,7 @@ PERSONAL_ACESS_TOKEN=<YOUR_PERSONAL_GITHUB_ACESS_TOKEN>
 
 ## API
 
-### Create list of 250 users/hour
+### Create list of 200 users/hour
 
 `POST /api/users`
 
@@ -28,7 +28,7 @@ Request Body
 
 ```js
 {
-  "repoUrl": "{ower}/{repo}"
+  "repoUrl": "https://github.com/{ower}/{repo}"
 }
 ```
 
@@ -36,7 +36,7 @@ E.g.
 
 ```js
 {
-  "repoUrl": "faceobook/react"
+  "repoUrl": "https://github.com/faceobook/react"
 }
 ```
 

@@ -83,7 +83,7 @@ export class UserService {
                         totalCount
                       }
                       isHireable
-                      repositories(first: 50) {
+                      repositories(first: 100) {
                         totalCount
                         edges {
                           node {
@@ -122,7 +122,7 @@ export class UserService {
                                 }
                               }
                             }
-                            languages(first: 2) {
+                            languages(first: 10) {
                               edges {
                                 node {
                                   name
@@ -180,7 +180,7 @@ export class UserService {
 
           miscKeywords.push(...tempMiscKeywords);
 
-          if (edRepo.node.stargazerCount > 5) {
+          if (!edRepo.node.isFork) {
             const tempLangs = edRepo.node.languages.edges.map(
               edLang => edLang.node.name,
             );
@@ -208,6 +208,15 @@ export class UserService {
           `get the user ${edge.node.login} out of ${repository.stargazers.totalCount} users - ${firstRequest.repoUrl}`,
         );
 
+        const mapLangs = langs.reduce(function(p, c) {
+          p[c] = (p[c] || 0) + 1;
+          return p;
+        }, {})
+
+        const newLangs = Object.keys(mapLangs).sort(function(a, b) {
+          return mapLangs[b] - mapLangs[a];
+        })
+        
         users.push({
           login: edge.node.login,
           repoUrl: firstRequest.repoUrl,
@@ -221,7 +230,7 @@ export class UserService {
           openToNewOpportunities: !!edge.node.isHireable,
           activityLevel: totalCommits,
           activeInOpenSource: openRepos.length > 0,
-          languages: [...new Set(langs)],
+          languages: [newLangs[0], newLangs[1]].filter(Boolean),
           miscKeywords: [...new Set(miscKeywords)],
         });
       }
