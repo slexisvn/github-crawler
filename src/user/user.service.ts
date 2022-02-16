@@ -25,7 +25,7 @@ export class UserService {
 
   private readonly logger = new Logger(User.name);
 
-  @Cron(CronExpression.EVERY_30_SECONDS)
+  @Cron(CronExpression.EVERY_30_MINUTES)
   async handleCron() {
     try {
       const regex = /^https:\/\/github\.com\/(\w+)\/([\w-]+)(\/|)$/;
@@ -41,7 +41,7 @@ export class UserService {
       }
 
       let hasNextPage = true;
-      let totalUsers = 2;
+      let totalUsers = 100;
       const firstRequest = crawlRequests[0];
       let endCursor = firstRequest.endCursors[0];
       const users = [];
